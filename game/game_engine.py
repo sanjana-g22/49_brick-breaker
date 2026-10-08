@@ -1,3 +1,4 @@
+import math
 import pygame
 from .paddle import Paddle
 from .ball import Ball
@@ -64,32 +65,98 @@ class GameEngine:
         if self.game_over:
             return
 
-        self.ball.move()
+        ball = self.ball
 
-        if self.ball.x - self.ball.radius <= 0 or self.ball.x + self.ball.radius >= self.width:
-            self.ball.vx *= -1
-        if self.ball.y - self.ball.radius <= 0:
-            self.ball.vy *= -1
+        # Sub-stepping: move the ball in small increments so it can never
+        # travel far enough in one step to skip over a brick or the paddle.
+        max_step = max(1.0, ball.radius * 0.5)
+        steps = max(1, math.ceil(max(abs(ball.vx), abs(ball.vy)) / max_step))
 
-        if self.ball.rect().colliderect(self.paddle.rect()):
-            # NOTE: always flips the ball's vertical velocity on a
-            # paddle collision, regardless of which side of the paddle
-            # was actually hit. See Task 1 in the README.
-            self.ball.vy *= -1
+        for _ in range(steps):
+            ball.x += ball.vx / steps
+            ball.y += ball.vy / steps
 
-        for brick in self.bricks:
-            if brick.alive and self.ball.rect().colliderect(brick.rect()):
-                brick.alive = False
+            # ---------------- Paddle ----------------
+            ball_rect = ball.rect()
+            paddle_rect = self.paddle.rect()
+
+            # Only bounce when moving downward and hitting from above,
+            # which prevents re-colliding / jittering while inside the paddle.
+            if (ball.vy > 0
+                    and ball_rect.colliderect(paddle_rect)
+                    and ball_rect.centery < paddle_rect.centery):
+                # Push the ball out so it sits on top of the paddle
+                ball.y -= ball_rect.bottom - paddle_rect.top
+
+                # Bounce angle depends on where the ball hit: -1 (left edge) to +1 (right edge)
+                offset = (ball_rect.centerx - paddle_rect.centerx) / (paddle_rect.width / 2)
+                offset = max(-1.0, min(1.0, offset))
+
+                max_angle = math.radians(60)  # max deviation from vertical
+                angle = offset * max_angle
+                speed = math.hypot(ball.vx, ball.vy)
+
+                ball.vx = speed * math.sin(angle)
+                ball.vy = -speed * math.cos(angle)  # always upward
+
+            # ---------------- Bricks ----------------
+            ball_rect = ball.rect()
+            hit_brick = None
+            best_area = 0
+
+            # If several bricks overlap, resolve against the one with the most overlap
+            for brick in self.bricks:
+                if brick.alive and ball_rect.colliderect(brick.rect()):
+                    overlap = ball_rect.clip(brick.rect())
+                    area = overlap.width * overlap.height
+                    if area > best_area:
+                        best_area = area
+                        hit_brick = brick
+
+            if hit_brick is not None:
+                brick_rect = hit_brick.rect()
+                hit_brick.alive = False
                 self.score += 1
-                # NOTE: same unconditional vertical-velocity flip as
-                # the paddle collision above - a brick hit from the
-                # left or right should redirect the ball sideways
-                # (flip vx), but this always flips vy instead. See
-                # Task 1 in the README.
-                self.ball.vy *= -1
-                break
 
-        if self.ball.y - self.ball.radius > self.height:
+                # Penetration depth from each side of the brick
+                over_left = ball_rect.right - brick_rect.left      # ball entered from the left
+                over_right = brick_rect.right - ball_rect.left     # ball entered from the right
+                over_top = ball_rect.bottom - brick_rect.top       # ball entered from the top
+                over_bottom = brick_rect.bottom - ball_rect.top    # ball entered from the bottom
+
+                min_x = min(over_left, over_right)
+                min_y = min(over_top, over_bottom)
+
+                if min_x < min_y:
+                    # Side hit: flip vx and push out horizontally
+                    if over_left < over_right:
+                        ball.x -= over_left
+                        ball.vx = -abs(ball.vx)
+                    else:
+                        ball.x += over_right
+                        ball.vx = abs(ball.vx)
+                else:
+                    # Top/bottom hit: flip vy and push out vertically
+                    if over_top < over_bottom:
+                        ball.y -= over_top
+                        ball.vy = -abs(ball.vy)
+                    else:
+                        ball.y += over_bottom
+                        ball.vy = abs(ball.vy)
+
+        # ---------------- Walls ----------------
+        if ball.x - ball.radius <= 0:
+            ball.x = ball.radius
+            ball.vx = abs(ball.vx)
+        elif ball.x + ball.radius >= self.width:
+            ball.x = self.width - ball.radius
+            ball.vx = -abs(ball.vx)
+        if ball.y - ball.radius <= 0:
+            ball.y = ball.radius
+            ball.vy = abs(ball.vy)
+
+        # ---------------- Lives / win ----------------
+        if ball.y - ball.radius > self.height:
             self.lives -= 1
             if self.lives <= 0:
                 self.game_over = True
