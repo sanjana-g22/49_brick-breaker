@@ -48,9 +48,13 @@ class GameEngine:
         return bricks
 
     def handle_event(self, event):
-        # This game only needs continuously-held-key input for the
-        # paddle, handled in handle_input each frame.
-        pass
+        # Only react once the end screen is showing, and ignore key presses
+        # in the first 500 ms so a key held during the final moments
+        # doesn't dismiss it instantly.
+        if self.game_over and event.type == pygame.KEYDOWN:
+            shown_at = getattr(self, "_game_over_time", None)
+            if shown_at is not None and pygame.time.get_ticks() - shown_at > 500:
+                pygame.event.post(pygame.event.Event(pygame.QUIT))
 
     def handle_input(self):
         if self.game_over:
@@ -189,10 +193,28 @@ class GameEngine:
         lives_text = self.font.render(f"Lives: {self.lives}", True, WHITE)
         screen.blit(lives_text, (self.width - 130, 10))
 
-        if self.game_over and not getattr(self, "_game_over_logged", False):
-            # NOTE: no proper end screen yet - see Task 2 in the README.
-            if self.result == "win":
-                print("You win! Final score:", self.score)
-            else:
-                print("Game over! Final score:", self.score)
-            self._game_over_logged = True
+        if self.game_over:
+            if not getattr(self, "_game_over_logged", False):
+                self._game_over_time = pygame.time.get_ticks()
+                self._game_over_logged = True
+
+            w, h = screen.get_size()
+
+            # Dim the game behind the text
+            overlay = pygame.Surface((w, h), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 180))
+            screen.blit(overlay, (0, 0))
+
+            if not hasattr(self, "_end_fonts"):
+                self._end_fonts = (pygame.font.Font(None, 72), pygame.font.Font(None, 36))
+            big, small = self._end_fonts
+
+            title = "YOU WIN!" if self.result == "win" else "GAME OVER"
+            lines = [
+                (big, title, (255, 255, 255), h // 2 - 60),
+                (small, f"Final score: {self.score}", (255, 255, 255), h // 2),
+                (small, "Press any key", (200, 200, 200), h // 2 + 50),
+            ]
+            for font, text, color, y in lines:
+                surf = font.render(text, True, color)
+                screen.blit(surf, surf.get_rect(center=(w // 2, y)))
