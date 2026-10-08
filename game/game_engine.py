@@ -16,24 +16,43 @@ BRICK_COLORS = [
     (80, 140, 200),
 ]
 
+DIFFICULTIES = {
+    "easy":   {"speed": 3, "paddle_width": 140},
+    "medium": {"speed": 4, "paddle_width": 100},
+    "hard":   {"speed": 6, "paddle_width": 70},
+}
+
 class GameEngine:
     def __init__(self, width, height):
         self.width = width
         self.height = height
-
-        self.paddle = Paddle(width // 2 - 50, height - 30, 100, 14)
-
-        self.ball = Ball(width // 2, height - 50, radius=8)
-        self.ball.vx, self.ball.vy = 4, -4
-
         self.rows, self.cols = 5, 8
+        self.font = pygame.font.SysFont("Arial", 28)
+
+        self.start("medium")
+
+    def start(self, difficulty="medium"):
+        """Fully (re)initialize the game for the given difficulty."""
+        self.difficulty = difficulty
+        settings = DIFFICULTIES[difficulty]
+        self.speed = settings["speed"]
+
+        pw = settings["paddle_width"]
+        self.paddle = Paddle(self.width // 2 - pw // 2, self.height - 30, pw, 14)
+
+        self.ball = Ball(self.width // 2, self.height - 50, radius=8)
+        self._reset_ball()
+
         self.bricks = self._build_bricks(self.rows, self.cols)
 
         self.lives = 3
         self.score = 0
-        self.font = pygame.font.SysFont("Arial", 28)
         self.game_over = False
         self.result = None  # "win" or "lose"
+
+        # Re-arm the end screen for the next time it appears
+        self._game_over_logged = False
+        self._game_over_time = None
 
     def _build_bricks(self, rows, cols):
         bricks = []
@@ -48,12 +67,19 @@ class GameEngine:
         return bricks
 
     def handle_event(self, event):
-        # Only react once the end screen is showing, and ignore key presses
-        # in the first 500 ms so a key held during the final moments
-        # doesn't dismiss it instantly.
         if self.game_over and event.type == pygame.KEYDOWN:
+            # Ignore input for 500 ms so a held key doesn't dismiss the screen
             shown_at = getattr(self, "_game_over_time", None)
-            if shown_at is not None and pygame.time.get_ticks() - shown_at > 500:
+            if shown_at is None or pygame.time.get_ticks() - shown_at <= 500:
+                return
+
+            if event.key == pygame.K_1:
+                self.start("easy")
+            elif event.key == pygame.K_2:
+                self.start("medium")
+            elif event.key == pygame.K_3:
+                self.start("hard")
+            elif event.key == pygame.K_ESCAPE:
                 pygame.event.post(pygame.event.Event(pygame.QUIT))
 
     def handle_input(self):
@@ -174,7 +200,7 @@ class GameEngine:
 
     def _reset_ball(self):
         self.ball.x, self.ball.y = self.width // 2, self.height - 50
-        self.ball.vx, self.ball.vy = 4, -4
+        self.ball.vx, self.ball.vy = self.speed, -self.speed
 
     def render(self, screen):
         screen.fill(BG)
@@ -211,9 +237,10 @@ class GameEngine:
 
             title = "YOU WIN!" if self.result == "win" else "GAME OVER"
             lines = [
-                (big, title, (255, 255, 255), h // 2 - 60),
-                (small, f"Final score: {self.score}", (255, 255, 255), h // 2),
-                (small, "Press any key", (200, 200, 200), h // 2 + 50),
+                (big, title, (255, 255, 255), h // 2 - 80),
+                (small, f"Final score: {self.score}", (255, 255, 255), h // 2 - 25),
+                (small, "Play again:  1 - Easy   2 - Medium   3 - Hard", (200, 200, 200), h // 2 + 25),
+                (small, "Esc - Quit", (200, 200, 200), h // 2 + 65),
             ]
             for font, text, color, y in lines:
                 surf = font.render(text, True, color)
