@@ -1,3 +1,4 @@
+import array
 import math
 import pygame
 from .paddle import Paddle
@@ -22,12 +23,77 @@ DIFFICULTIES = {
     "hard":   {"speed": 6, "paddle_width": 70},
 }
 
+
+class SoundBank:
+    """Generates simple sound effects in code. If the mixer is unavailable,
+    every play() call silently does nothing."""
+
+    def __init__(self):
+        self.sounds = {}
+        self.enabled = False
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(44100, -16, 1, 512)
+            init = pygame.mixer.get_init()
+            if init is None:
+                return
+            self.rate, fmt, self.channels = init
+            if fmt != -16:  # only signed 16-bit output is supported here
+                return
+
+            self.sounds = {
+                # (start_freq, end_freq, seconds, volume, wave)
+                "brick":  self._make([(660, 880, 0.08, 0.30, "square")]),
+                "paddle": self._make([(330, 300, 0.07, 0.45, "sine")]),
+                "wall":   self._make([(220, 200, 0.05, 0.30, "square")]),
+                "win":    self._make([(523, 523, 0.12, 0.35, "square"),
+                                      (659, 659, 0.12, 0.35, "square"),
+                                      (784, 784, 0.12, 0.35, "square"),
+                                      (1047, 1047, 0.30, 0.35, "square")]),
+                "lose":   self._make([(392, 392, 0.15, 0.35, "square"),
+                                      (330, 330, 0.15, 0.35, "square"),
+                                      (262, 262, 0.15, 0.35, "square"),
+                                      (196, 150, 0.40, 0.35, "square")]),
+            }
+            self.enabled = True
+        except Exception:
+            self.sounds = {}
+            self.enabled = False
+
+    def _make(self, notes):
+        samples = array.array("h")
+        for f0, f1, dur, vol, wave in notes:
+            n = int(self.rate * dur)
+            phase = 0.0
+            attack = max(1, int(self.rate * 0.005))  # 5 ms fade-in avoids clicks
+            for i in range(n):
+                t = i / n
+                phase += 2 * math.pi * (f0 + (f1 - f0) * t) / self.rate
+                s = math.sin(phase)
+                if wave == "square":
+                    s = 1.0 if s >= 0 else -1.0
+                env = (1 - t) ** 2 * min(1.0, i / attack)
+                value = int(32767 * vol * s * env)
+                for _ in range(self.channels):
+                    samples.append(value)
+        return pygame.mixer.Sound(buffer=samples.tobytes())
+
+    def play(self, name):
+        if not self.enabled:
+            return
+        try:
+            self.sounds[name].play()
+        except Exception:
+            pass
+
+
 class GameEngine:
     def __init__(self, width, height):
         self.width = width
         self.height = height
         self.rows, self.cols = 5, 8
         self.font = pygame.font.SysFont("Arial", 28)
+        self.sounds = SoundBank()
 
         self.start("medium")
 
@@ -128,6 +194,7 @@ class GameEngine:
 
                 ball.vx = speed * math.sin(angle)
                 ball.vy = -speed * math.cos(angle)  # always upward
+                self.sounds.play("paddle")
 
             # ---------------- Bricks ----------------
             ball_rect = ball.rect()
@@ -147,6 +214,7 @@ class GameEngine:
                 brick_rect = hit_brick.rect()
                 hit_brick.alive = False
                 self.score += 1
+                self.sounds.play("brick")
 
                 # Penetration depth from each side of the brick
                 over_left = ball_rect.right - brick_rect.left      # ball entered from the left
@@ -178,12 +246,15 @@ class GameEngine:
         if ball.x - ball.radius <= 0:
             ball.x = ball.radius
             ball.vx = abs(ball.vx)
+            self.sounds.play("wall")
         elif ball.x + ball.radius >= self.width:
             ball.x = self.width - ball.radius
             ball.vx = -abs(ball.vx)
+            self.sounds.play("wall")
         if ball.y - ball.radius <= 0:
             ball.y = ball.radius
             ball.vy = abs(ball.vy)
+            self.sounds.play("wall")
 
         # ---------------- Lives / win ----------------
         if ball.y - ball.radius > self.height:
@@ -191,12 +262,14 @@ class GameEngine:
             if self.lives <= 0:
                 self.game_over = True
                 self.result = "lose"
+                self.sounds.play("lose")
             else:
                 self._reset_ball()
 
-        if all(not b.alive for b in self.bricks):
+        if not self.game_over and all(not b.alive for b in self.bricks):
             self.game_over = True
             self.result = "win"
+            self.sounds.play("win")
 
     def _reset_ball(self):
         self.ball.x, self.ball.y = self.width // 2, self.height - 50
